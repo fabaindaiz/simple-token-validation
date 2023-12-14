@@ -2,6 +2,7 @@ import os
 import jwt
 import base64
 import datetime
+from typing import Optional
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -11,8 +12,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 class CryptoStore:
 
     def __init__(self) -> None:
-        self._private_key = None
-        self._public_key = None
+        self._private_key: Optional[rsa.RSAPrivateKey] = None
+        self._public_key: Optional[rsa.RSAPublicKey] = None
     
     def generate_keys(self, key_size=2048) -> None:
         self._private_key = rsa.generate_private_key(
@@ -24,14 +25,21 @@ class CryptoStore:
     
     def load_private_key(self, file: str = 'private_key.pem') -> None:
         with open(file, "rb") as key_file:
-            self._private_key = serialization.load_pem_private_key(
+            private_key = serialization.load_pem_private_key(
                 key_file.read(),
                 password=None,
                 backend=default_backend()
             )
-        self._public_key = self._private_key.public_key()
+        
+        if not isinstance(private_key, rsa.RSAPrivateKey):
+            raise Exception("Private key not loaded.")
+        self._private_key = private_key
+        self._public_key = private_key.public_key()
     
-    def save_private_key(self, file: str = 'private_key.pem') -> str:
+    def save_private_key(self, file: str = 'private_key.pem') -> None:
+        if not self._private_key:
+            raise Exception("Private key not loaded.")
+
         private_pem = self._private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -42,12 +50,19 @@ class CryptoStore:
     
     def load_public_key(self, file: str = 'public_key.pem') -> None:
         with open("public_key.pem", "rb") as key_file:
-            self._public_key = serialization.load_pem_public_key(
+            public_key = serialization.load_pem_public_key(
                 key_file.read(),
                 backend=default_backend()
             )
+        
+        if not isinstance(public_key, rsa.RSAPublicKey):
+            raise Exception("Public key not loaded.")
+        self._public_key = public_key
     
     def save_public_key(self, file: str = 'public_key.pem') -> None:
+        if not self._public_key:
+            raise Exception("Public key not loaded.")
+        
         public_pem = self._public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
@@ -64,7 +79,7 @@ class TokenValidate:
     def generate_signed_token(self, time: int = 300, data: dict = {}) -> str:
         if not self._store._private_key:
             raise Exception("Private key not loaded.")
-
+        
         payload = {
             **data,
             "valid": True,
@@ -75,7 +90,7 @@ class TokenValidate:
     def verify_signed_token(self, token) -> dict:
         if not self._store._public_key:
             raise Exception("Public key not loaded.")
-
+        
         try:
             return jwt.decode(token, self._store._public_key, algorithms=['RS256'])
         except jwt.ExpiredSignatureError:
@@ -93,30 +108,30 @@ class TokenEncrypt:
         return key.ljust(16, '\0')
     
     def encrypt_token(self, token: str, key: str) -> str:
-        key = self._pad(key).encode()
+        bkey = self._pad(key).encode()
         iv = os.urandom(16)
 
         padder = padding.PKCS7(128).padder()
         padded_data = padder.update(token.encode()) + padder.finalize()
 
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(bkey), modes.CBC(iv), backend=default_backend())
         encryptor = cipher.encryptor()
         ct = encryptor.update(padded_data) + encryptor.finalize()
         return base64.b64encode(iv + ct).decode('utf-8')
 
     def decrypt_token(self, token: str, key: str) -> str:
-        key = self._pad(key).encode()
-        token = base64.b64decode(token.encode())
-        iv = token[:16]
-        ct = token[16:]
+        bkey = self._pad(key).encode()
+        btoken = base64.b64decode(token.encode())
+        iv = btoken[:16]
+        ct = btoken[16:]
 
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(bkey), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         padded_token = decryptor.update(ct) + decryptor.finalize()
         
         unpadder = padding.PKCS7(128).unpadder()
         try:
-            token = unpadder.update(padded_token) + unpadder.finalize()
-            return token.decode('utf-8')
+            btoken = unpadder.update(padded_token) + unpadder.finalize()
+            return btoken.decode('utf-8')
         except ValueError:
-            return None
+            return ""

@@ -1,15 +1,17 @@
 import time
-
 from src.tokenvalidation import CryptoStore, TokenValidate, TokenEncrypt
 
 
 store = CryptoStore()
 store.generate_keys()
-
 validate = TokenValidate(store)
 encrypt = TokenEncrypt()
 
-if 1:
+if 0:
+    store.save_private_key()
+    store.save_public_key()
+
+if 0:
     token = validate.generate_signed_token(time=1)
     print(validate.verify_signed_token(token))
 
@@ -18,7 +20,7 @@ if 1:
     time.sleep(1)
     print(validate.verify_signed_token(token))
 
-if 0:
+if 1:
     code = "123456"
     token = validate.generate_signed_token(time=1)
     etoken = encrypt.encrypt_token(token, code)
